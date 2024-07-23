@@ -67,7 +67,7 @@ def preprocess_text(text: str) -> str:
     text = re.sub(r'[^a-zA-Z\s]', '', text)
     text = re.sub(' +', ' ', text)
     words = text.split()
-    # HACK: This helps when handling large descriptions and we want to extract keywords to improve prediction
+    # HACK: This helps for large descriptions with multiple keywords to extract the most relevant one
     if len(words) > 3:
         rnk.extract_keywords_from_text(text)
         keyword_extracted = rnk.get_ranked_phrases_with_scores() # [(1.0, 'desktop')]
