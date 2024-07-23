@@ -11,10 +11,13 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import nltk
 from nltk.corpus import stopwords
 from fuzzywuzzy import process
+from rake_nltk import Rake, Metric
+
 
 # Setup logging
 logger = logging.getLogger(__name__)
 coloredlogs.install(level='INFO', logger=logger, fmt='%(asctime)s - %(levelname)s - %(message)s')
+
 
 # Download necessary NLTK data
 nltk.download('punkt')
@@ -50,11 +53,25 @@ merged_df['Combined Text'] = merged_df['Combined Text'] + ' ' + merged_df['UNSPS
 
 # Clean and preprocess text data
 stop_words = set(stopwords.words('english'))
+# punctuations Optional[Set[str]] = None
+punctuations = {'.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '/', '\\', '|', '<', '>', '@', '#', '$', '%', '^', '&', '*', '~', '`', '+'}
+rnk = Rake(stopwords=stop_words, max_length=1, min_length=1, ranking_metric=Metric.DEGREE_TO_FREQUENCY_RATIO, punctuations=punctuations)
 
-def preprocess_text(text):
+def preprocess_text(text: str) -> str:
+    """
+    Preprocesses text data by removing special characters, extra spaces, and extracting keywords.
+        - If sentence has more than 3 words, extract keywords using Rake.
+        - Returns the first keyword if found, otherwise returns the original text.
+    """
     text = text.lower()
     text = re.sub(r'[^a-zA-Z\s]', '', text)
     text = re.sub(' +', ' ', text)
+    words = text.split()
+    # HACK: This helps when handling large descriptions and we want to extract keywords to improve prediction
+    if len(words) > 3:
+        rnk.extract_keywords_from_text(text)
+        keyword_extracted = rnk.get_ranked_phrases_with_scores() # [(1.0, 'desktop')]
+        text = keyword_extracted[0][1] if keyword_extracted else text
     return text
 
 # Use TF-IDF Vectorizer instead of Word2Vec
