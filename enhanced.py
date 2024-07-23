@@ -164,10 +164,11 @@ def predict_unspsc(description):
             # Step 3: Fuzzy Matching
             possible_descriptions = unspsc_large_df['UNSPSC Description'].values
             best_match_tuple = process.extractOne(description, possible_descriptions)
-            
+
+            threshold = 90
             if best_match_tuple:
                 best_match, match_score = best_match_tuple # pyright: ignore[reportAssignmentType]
-                if match_score > 90:
+                if match_score > threshold:
                     unspsc_code = unspsc_large_df.loc[unspsc_large_df['UNSPSC Description'] == best_match, 'UNSPSC'].values[0]
                     unspsc_description = best_match
 
