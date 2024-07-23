@@ -155,20 +155,28 @@ def search_category_by_description(description):
         logger.error(f"Error searching category by description: {e}")
         return None
 
+# FIX: Check if the found description has contains words from the original description
 def predict_unspsc(description):
     try:
         # Preprocess the user description
         cleaned_description = preprocess_text(description)
 
-        # Step 1: Check for exact matches in unspsc_large_df
-        exact_match = unspsc_large_df[
-            unspsc_large_df['UNSPSC Description'].str.contains(cleaned_description, case=False, na=False)
-        ]
-        if not exact_match.empty:
-            unspsc_code = exact_match.iloc[0]['UNSPSC']
-            unspsc_description = exact_match.iloc[0]['UNSPSC Description']
+        # Check the number of words in the cleaned description
+        num_words = len(cleaned_description.split())
+        
+        if num_words < 2:
+            # Use exact match search if the description has less than 2 words
+            exact_match = unspsc_large_df[
+                unspsc_large_df['UNSPSC Description'].str.contains(cleaned_description, case=False, na=False)
+            ]
+            if not exact_match.empty:
+                unspsc_code = exact_match.iloc[0]['UNSPSC']
+                unspsc_description = exact_match.iloc[0]['UNSPSC Description']
+            else:
+                unspsc_code = None
+                unspsc_description = "Description not found"
         else:
-            # Step 2: Use model prediction
+            # Use model prediction if the description has 2 or more words
             vectorized_description = tfidf_vectorizer.transform([cleaned_description])
             unspsc_code = model.predict(vectorized_description)[0]
             unspsc_description = unspsc_large_df.loc[unspsc_large_df['UNSPSC'] == unspsc_code, 'UNSPSC Description'].values
@@ -178,7 +186,7 @@ def predict_unspsc(description):
             else:
                 unspsc_description = "Description not found"
 
-            # Step 3: Fuzzy Matching
+            # Fuzzy Matching
             possible_descriptions = unspsc_large_df['UNSPSC Description'].values
             best_match_tuple = process.extractOne(description, possible_descriptions)
 
