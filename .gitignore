@@ -1,4 +1,6 @@
 .venv
 GoogleNews-vectors-negative300.bin
-*.pkl
 datasets/
+*.pkl
+unspsc_flask_server.py
+.env

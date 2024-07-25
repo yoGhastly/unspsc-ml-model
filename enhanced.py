@@ -13,7 +13,12 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from fuzzywuzzy import process
 from rake_nltk import Rake, Metric
+from time import sleep
+import requests
+import os
 
+FLASK_SERVER_URL = "http://127.0.0.1:5000/relevant_keyword"
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -23,6 +28,31 @@ coloredlogs.install(level='INFO', logger=logger, fmt='%(asctime)s - %(levelname)
 # Download necessary NLTK data
 nltk.download('punkt')
 nltk.download('stopwords')
+
+def get_main_relevant_keyword_from_ai(keywords, description):
+    print(f"Keywords: {keywords}")
+    print(f"Original Description: {description}")
+    """Get the main relevant keyword from the AI companion."""
+    payload = {
+        "description": description,
+        "keywords": keywords,
+        "token": ACCESS_TOKEN 
+    }
+    headers = {"Content-Type": "application/json"}
+
+    try:
+        response = requests.post(FLASK_SERVER_URL, json=payload, headers=headers)
+        response.raise_for_status()  
+        print(f"Raw Response: {response.json()}")
+        main_keyword = response.json().get("output", "")
+        print(f"Main Keyword: {main_keyword}")
+        return main_keyword
+    except requests.exceptions.HTTPError as err:
+        print(f"HTTP error occurred: {err}")
+    except requests.exceptions.RequestException as e:
+        print(f"Request exception occurred: {e}")
+
+    return None
 
 # Load datasets with error handling
 try:
@@ -58,25 +88,35 @@ punctuations = {'.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '/',
 rnk = Rake(stopwords=stop_words, max_length=3, min_length=1, ranking_metric=Metric.DEGREE_TO_FREQUENCY_RATIO, punctuations=punctuations)
 
 def preprocess_text(text: str):
+    # Convert text to lowercase
     text = text.lower()
+    # Remove punctuation
     text = re.sub(r'[^a-zA-Z\s]', '', text)
+    # Remove extra spaces
     text = re.sub(' +', ' ', text)
-    words = text.split()
-    keywords = []
-    print(f"Original Text: {text}")  # Debug print
     
-    if len(words) > 3:
-        rnk.extract_keywords_from_text(text)
-        keyword_extracted = rnk.get_ranked_phrases_with_scores()
-        print(f"Extracted Phrases with Scores: {keyword_extracted}")  # Debug print
-        keywords = [phrase[1] for phrase in keyword_extracted[:10]]  # Get top 10 keywords or phrases
-        text = ' '.join(keywords)
-        print(f"Keywords extracted: {keywords}")  # Debug print
-    stop_words = set(stopwords.words('english'))
+    # Tokenize text
     word_tokens = word_tokenize(text)
-    filtered_text = [w for w in word_tokens if not w in stop_words]
-    cleaned_text = " ".join(filtered_text)
+    
+    # Remove stopwords
+    stop_words = set(stopwords.words('english'))
+    filtered_words = [w for w in word_tokens if not w in stop_words]
+    
+    # Reconstruct the cleaned text
+    cleaned_text = " ".join(filtered_words)
+    
+    # Extract keywords
+    rnk.extract_keywords_from_text(cleaned_text)
+    keyword_extracted = rnk.get_ranked_phrases_with_scores()
+    
+    # Debugging outputs
+    print(f"Original Text: {text}")  # Debug print
+    print(f"Filtered Words: {filtered_words}")  # Debug print
+    
+    keywords = filtered_words 
+    
     return cleaned_text, keywords
+
 
 # Use TF-IDF Vectorizer instead of Word2Vec
 tfidf_vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(1, 2))
@@ -164,46 +204,45 @@ def predict_unspsc(description):
         # Preprocess the user description
         cleaned_description, keywords = preprocess_text(description)
         
-        # Print the cleaned description and keywords for debugging
-        print(f"Cleaned description for prediction: {cleaned_description}")
-        print(f"Extracted Keywords: {keywords}")
+        # Initialize best match variables
+        unspsc_code = None
+        unspsc_description = "Description not found"
+        
+        # Use the main keyword from the AI companion 
+        keyword_to_use = get_main_relevant_keyword_from_ai(keywords, cleaned_description)
+        print(f"Formatted Keywords: {keyword_to_use}")
 
-        # Use the most relevant keyword or phrase
-        if keywords:
-            primary_keyword = keywords[0]
-            print(f"Keywords used as input: {primary_keyword}")  # Debug print
-        else:
-            primary_keyword = cleaned_description
-            print(f"Keywords used as input: {primary_keyword}")  # Debug print
-
-        # Check for exact matches in unspsc_large_df
+        # Check exact matches with the prioritized keyword
         exact_match = unspsc_large_df[
-            unspsc_large_df['UNSPSC Description'].str.contains(primary_keyword, case=False, na=False)
+            unspsc_large_df['UNSPSC Description'].str.contains(keyword_to_use, case=False, na=False)
         ]
+
         if not exact_match.empty:
             unspsc_code = exact_match.iloc[0]['UNSPSC']
             unspsc_description = exact_match.iloc[0]['UNSPSC Description']
+            return unspsc_code, unspsc_description
+
+        # Use model prediction if no exact match found
+        vectorized_description = tfidf_vectorizer.transform([cleaned_description])
+        unspsc_code = model.predict(vectorized_description)[0]
+        unspsc_description = unspsc_large_df.loc[unspsc_large_df['UNSPSC'] == unspsc_code, 'UNSPSC Description'].values
+        
+        if len(unspsc_description) > 0:
+            unspsc_description = unspsc_description[0]
         else:
-            # Use model prediction
-            vectorized_description = tfidf_vectorizer.transform([cleaned_description])
-            unspsc_code = model.predict(vectorized_description)[0]
-            unspsc_description = unspsc_large_df.loc[unspsc_large_df['UNSPSC'] == unspsc_code, 'UNSPSC Description'].values
-            
-            if len(unspsc_description) > 0:
-                unspsc_description = unspsc_description[0]
-            else:
-                unspsc_description = "Description not found"
+            unspsc_description = "Description not found"
 
-            # Fuzzy Matching
-            possible_descriptions = unspsc_large_df['UNSPSC Description'].values
-            best_match_tuple = process.extractOne(description, possible_descriptions)
+        # Fuzzy Matching as fallback
+        possible_descriptions = unspsc_large_df['UNSPSC Description'].values
+        best_match_tuple = process.extractOne(description, possible_descriptions)
 
-            threshold = 90
-            if best_match_tuple:
-                best_match, match_score = best_match_tuple # pyright: ignore[reportAssignmentType]
-                if match_score > threshold:
-                    unspsc_code = unspsc_large_df.loc[unspsc_large_df['UNSPSC Description'] == best_match, 'UNSPSC'].values[0]
-                    unspsc_description = best_match
+        threshold = 90
+        if best_match_tuple:
+            best_match, match_score = best_match_tuple
+            if match_score > threshold:
+                unspsc_code = unspsc_large_df.loc[unspsc_large_df['UNSPSC Description'] == best_match, 'UNSPSC'].values[0]
+                unspsc_description = best_match
+        
     except Exception as e:
         logger.error(f"Error predicting UNSPSC code: {e}")
         unspsc_code, unspsc_description = None, None
@@ -214,27 +253,39 @@ def predict_unspsc(description):
 # or the fuzzy matching to get the UNSPSC code or Take as input the keywords extracted and feed the AI companion anf then
 # get a better result
 def main():
-    try:
-        description = input("Enter the product description: ")
-        unspsc_code, unspsc_description = predict_unspsc(description)
-        
-        if unspsc_code:
-            category_codes = get_category_codes(unspsc_code)
-            category_details = [get_category_details_from_category_structure(*category_codes)]
+    while True:
+        try:
+            # Prompt the user for input
+            sleep(2)
+            description = input("Enter the product description (or type 'q' to quit): ")
+            
+            # Check if the user wants to quit
+            if description.lower() == 'q':
+                print("Exiting the program. Goodbye!")
+                break
+            
+            # Predict UNSPSC code and description
+            unspsc_code, unspsc_description = predict_unspsc(description)
+            
+            if unspsc_code:
+                # Retrieve category codes and details
+                category_codes = get_category_codes(unspsc_code)
+                category_details = [get_category_details_from_category_structure(*category_codes)]
 
-            print(f"Predicted UNSPSC Code: {unspsc_code}")
-            print(f"Predicted UNSPSC Description: {unspsc_description}")
+                print(f"Predicted UNSPSC Code: {unspsc_code}")
+                print(f"Predicted UNSPSC Description: {unspsc_description}")
 
-            for detail in category_details:
-                if detail:
-                    print(f"Category Code: {detail['code']}")
-                    print(f"Category Description: {detail['description']}")
-                else:
-                    print("Category details not found.")
-        else:
-            print("UNSPSC Code not found.")
-    except Exception as e:
-        logger.error(f"Error in main function: {e}")
+                for detail in category_details:
+                    if detail:
+                        print(f"Category Code: {detail['code']}")
+                        print(f"Category Description: {detail['description']}")
+                    else:
+                        print("Category details not found.")
+            else:
+                print("UNSPSC Code not found.")
+        except Exception as e:
+            logger.error(f"Error in main function: {e}")
+            print(f"An error occurred: {e}")
 
 if __name__ == '__main__':
     main()
