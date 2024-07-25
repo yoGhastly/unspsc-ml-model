@@ -54,29 +54,23 @@ merged_df['Combined Text'] = merged_df['Combined Text'] + ' ' + merged_df['UNSPS
 
 # Clean and preprocess text data
 stop_words = set(stopwords.words('english'))
+# punctuations Optional[Set[str]] = None
 punctuations = {'.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '/', '\\', '|', '<', '>', '@', '#', '$', '%', '^', '&', '*', '~', '', '+'}
-rnk = Rake(stopwords=stop_words, max_length=3, min_length=1, ranking_metric=Metric.DEGREE_TO_FREQUENCY_RATIO, punctuations=punctuations)
+rnk = Rake(stopwords=stop_words, max_length=1, min_length=1, ranking_metric=Metric.DEGREE_TO_FREQUENCY_RATIO, punctuations=punctuations)
 
-def preprocess_text(text: str):
+def preprocess_text(text: str) -> str:
     text = text.lower()
     text = re.sub(r'[^a-zA-Z\s]', '', text)
     text = re.sub(' +', ' ', text)
     words = text.split()
-    keywords = []
-    print(f"Original Text: {text}")  # Debug print
-    
     if len(words) > 3:
         rnk.extract_keywords_from_text(text)
         keyword_extracted = rnk.get_ranked_phrases_with_scores()
-        print(f"Extracted Phrases with Scores: {keyword_extracted}")  # Debug print
-        keywords = [phrase[1] for phrase in keyword_extracted[:10]]  # Get top 10 keywords or phrases
-        text = ' '.join(keywords)
-        print(f"Keywords extracted: {keywords}")  # Debug print
+        text = keyword_extracted[0][1] if keyword_extracted else text
     stop_words = set(stopwords.words('english'))
     word_tokens = word_tokenize(text)
     filtered_text = [w for w in word_tokens if not w in stop_words]
-    cleaned_text = " ".join(filtered_text)
-    return cleaned_text, keywords
+    return " ".join(filtered_text)
 
 # Use TF-IDF Vectorizer instead of Word2Vec
 tfidf_vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(1, 2))
@@ -147,6 +141,7 @@ def get_category_details_from_category_structure(level_1_code, level_2_code, lev
 def search_category_by_description(description):
     try:
         cleaned_description = preprocess_text(description)
+        print(cleaned_description)
         matched_rows = category_structure_df[
             category_structure_df['Category Level 1, 2, 3 & 4 Description'].str.contains(
                 cleaned_description, case=False, na=False
@@ -162,29 +157,18 @@ def search_category_by_description(description):
 def predict_unspsc(description):
     try:
         # Preprocess the user description
-        cleaned_description, keywords = preprocess_text(description)
-        
-        # Print the cleaned description and keywords for debugging
-        print(f"Cleaned description for prediction: {cleaned_description}")
-        print(f"Extracted Keywords: {keywords}")
+        cleaned_description = preprocess_text(description)
+        print(cleaned_description)
 
-        # Use the most relevant keyword or phrase
-        if keywords:
-            primary_keyword = keywords[0]
-            print(f"Keywords used as input: {primary_keyword}")  # Debug print
-        else:
-            primary_keyword = cleaned_description
-            print(f"Keywords used as input: {primary_keyword}")  # Debug print
-
-        # Check for exact matches in unspsc_large_df
+        # Step 1: Check for exact matches in unspsc_large_df
         exact_match = unspsc_large_df[
-            unspsc_large_df['UNSPSC Description'].str.contains(primary_keyword, case=False, na=False)
+            unspsc_large_df['UNSPSC Description'].str.contains(cleaned_description, case=False, na=False)
         ]
         if not exact_match.empty:
             unspsc_code = exact_match.iloc[0]['UNSPSC']
             unspsc_description = exact_match.iloc[0]['UNSPSC Description']
         else:
-            # Use model prediction
+            # Step 2: Use model prediction
             vectorized_description = tfidf_vectorizer.transform([cleaned_description])
             unspsc_code = model.predict(vectorized_description)[0]
             unspsc_description = unspsc_large_df.loc[unspsc_large_df['UNSPSC'] == unspsc_code, 'UNSPSC Description'].values
@@ -194,7 +178,7 @@ def predict_unspsc(description):
             else:
                 unspsc_description = "Description not found"
 
-            # Fuzzy Matching
+            # Step 3: Fuzzy Matching
             possible_descriptions = unspsc_large_df['UNSPSC Description'].values
             best_match_tuple = process.extractOne(description, possible_descriptions)
 
@@ -204,37 +188,47 @@ def predict_unspsc(description):
                 if match_score > threshold:
                     unspsc_code = unspsc_large_df.loc[unspsc_large_df['UNSPSC Description'] == best_match, 'UNSPSC'].values[0]
                     unspsc_description = best_match
-    except Exception as e:
-        logger.error(f"Error predicting UNSPSC code: {e}")
-        unspsc_code, unspsc_description = None, None
-    
-    return unspsc_code, unspsc_description
 
-# TODO: We currently have a good base for the model, so when we get the keyword then we can use either the model 
-# or the fuzzy matching to get the UNSPSC code or Take as input the keywords extracted and feed the AI companion anf then
-# get a better result
-def main():
-    try:
-        description = input("Enter the product description: ")
-        unspsc_code, unspsc_description = predict_unspsc(description)
+        # Retrieve category information
+        level_1_code, level_2_code, level_3_code, level_4_code = get_category_codes(unspsc_code)
+        category_details = get_category_details_from_category_structure(level_1_code, level_2_code, level_3_code, level_4_code)
         
-        if unspsc_code:
-            category_codes = get_category_codes(unspsc_code)
-            category_details = [get_category_details_from_category_structure(*category_codes)]
+        if not category_details:
+            # Search by description if category is not found by code
+            category_matches = search_category_by_description(cleaned_description)
+            if category_matches is not None and not category_matches.empty:
+                category_code = category_matches.iloc[0]['Category Level 1, 2, 3 & 4 Code ']
+                category_description = category_matches.iloc[0]['Category Level 1, 2, 3 & 4 Description']
+                category_details = {
+                    'code': category_code,
+                    'description': category_description
+                }
 
-            print(f"Predicted UNSPSC Code: {unspsc_code}")
-            print(f"Predicted UNSPSC Description: {unspsc_description}")
-
-            for detail in category_details:
-                if detail:
-                    print(f"Category Code: {detail['code']}")
-                    print(f"Category Description: {detail['description']}")
-                else:
-                    print("Category details not found.")
-        else:
-            print("UNSPSC Code not found.")
+        return {
+            'UNSPSC Code': unspsc_code,
+            'UNSPSC Description': unspsc_description,
+            'Category Code': category_details['code'] if category_details else None,
+            'Category Description': category_details['description'] if category_details else None
+        }
     except Exception as e:
-        logger.error(f"Error in main function: {e}")
+        logger.error(f"Error in prediction: {e}")
+        return {
+            'UNSPSC Code': None,
+            'UNSPSC Description': None,
+            'Category Code': None,
+            'Category Description': None
+        }
+
+def main():
+    while True:
+        users_description = input("Enter a product description (or type 'q' to quit): ")
+        if users_description == 'q':
+            break
+        prediction = predict_unspsc(users_description)
+        print(f'UNSPSC Code: {prediction["UNSPSC Code"]}')
+        print(f'UNSPSC Description: {prediction["UNSPSC Description"]}')
+        print(f'Category Code: {prediction["Category Code"]}')
+        print(f'Category Description: {prediction["Category Description"]}')
 
 if __name__ == '__main__':
     main()
