@@ -13,11 +13,15 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from fuzzywuzzy import process
 from rake_nltk import Rake, Metric
-from time import sleep
 import requests
+from dotenv import load_dotenv
 import os
 
-FLASK_SERVER_URL = "http://127.0.0.1:5000/relevant_keyword"
+# Load environment variables
+load_dotenv()
+
+# Setup constants
+FLASK_SERVER_BASE_URL = os.getenv("FLASK_SERVER_BASE_URL")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 
 # Setup logging
@@ -41,7 +45,7 @@ def get_main_relevant_keyword_from_ai(keywords, description):
     headers = {"Content-Type": "application/json"}
 
     try:
-        response = requests.post(FLASK_SERVER_URL, json=payload, headers=headers)
+        response = requests.post(f'{FLASK_SERVER_BASE_URL}/relevant_keyword', json=payload, headers=headers)
         response.raise_for_status()  
         print(f"Raw Response: {response.json()}")
         main_keyword = response.json().get("output", "")
@@ -54,7 +58,6 @@ def get_main_relevant_keyword_from_ai(keywords, description):
 
     return None
 
-# Load datasets with error handling
 try:
     unspsc_large_df = pd.read_excel('datasets/unspsc_large_dataset.xlsx')
     unspsc_df = pd.read_excel('datasets/unspsc_dataset.xlsx')
@@ -107,7 +110,7 @@ def preprocess_text(text: str):
     
     # Extract keywords
     rnk.extract_keywords_from_text(cleaned_text)
-    keyword_extracted = rnk.get_ranked_phrases_with_scores()
+    # keyword_extracted = rnk.get_ranked_phrases_with_scores()
     
     # Debugging outputs
     print(f"Original Text: {text}")  # Debug print
@@ -238,7 +241,7 @@ def predict_unspsc(description):
 
         threshold = 90
         if best_match_tuple:
-            best_match, match_score = best_match_tuple
+            best_match, match_score = best_match_tuple # pyright: ignore[reportAssignmentType]
             if match_score > threshold:
                 unspsc_code = unspsc_large_df.loc[unspsc_large_df['UNSPSC Description'] == best_match, 'UNSPSC'].values[0]
                 unspsc_description = best_match
@@ -249,26 +252,17 @@ def predict_unspsc(description):
     
     return unspsc_code, unspsc_description
 
-# TODO: We currently have a good base for the model, so when we get the keyword then we can use either the model 
-# or the fuzzy matching to get the UNSPSC code or Take as input the keywords extracted and feed the AI companion anf then
-# get a better result
 def main():
     while True:
         try:
-            # Prompt the user for input
-            sleep(2)
             description = input("Enter the product description (or type 'q' to quit): ")
             
-            # Check if the user wants to quit
             if description.lower() == 'q':
-                print("Exiting the program. Goodbye!")
                 break
             
-            # Predict UNSPSC code and description
             unspsc_code, unspsc_description = predict_unspsc(description)
             
             if unspsc_code:
-                # Retrieve category codes and details
                 category_codes = get_category_codes(unspsc_code)
                 category_details = [get_category_details_from_category_structure(*category_codes)]
 
