@@ -64,6 +64,7 @@ try:
     category_df = pd.read_excel('datasets/category_dataset.xlsx')
     category_structure_df = pd.read_excel('datasets/category_structure.xlsx')
     unspsc_with_levels_df = pd.read_excel('datasets/unspsc_with_levels.xlsx')
+    suppliers_unspsc_df = pd.read_excel('datasets/enhanced/Suppliers by UNSPSC.xlsx')
 except Exception as e:
     logger.error(f"Error loading datasets: {e}")
     raise
@@ -202,6 +203,19 @@ def search_category_by_description(description):
         logger.error(f"Error searching category by description: {e}")
         return None
 
+def predict_by_supplier_name(supplier_name: str):
+    try:
+        filtered_df = suppliers_unspsc_df[
+            suppliers_unspsc_df['Supplier Name'].str.contains(supplier_name, case=False, na=False)
+        ]
+        if not filtered_df.empty:
+            return filtered_df[['UNSPSC Code', 'UNSPSC Description']]
+        return None
+    except Exception as e:
+        logger.error(f"Error predicting by supplier name: {e}")
+        return None
+
+
 def predict_unspsc(description):
     try:
         # Preprocess the user description
@@ -259,6 +273,18 @@ def main():
             
             if description.lower() == 'q':
                 break
+
+            if 'supplier:' in description:
+                supplier_name = description.split('supplier:')[1].strip()
+                supplier_results = predict_by_supplier_name(supplier_name)
+                if supplier_results is not None:
+                    print(f'Supplier: {supplier_name}')
+                    for _, row in supplier_results.iterrows(): # pyright: ignore[reportAttributeAccessIssue]
+                        print(f"Predicted UNSPSC Code: {row['UNSPSC Code']}")
+                        print(f"Predicted UNSPSC Description: {row['UNSPSC Description']}")
+                else:
+                    print("Supplier not found.")
+                continue
             
             unspsc_code, unspsc_description = predict_unspsc(description)
             
