@@ -22,7 +22,6 @@ load_dotenv()
 
 # Setup constants
 FLASK_SERVER_BASE_URL = os.getenv("FLASK_SERVER_BASE_URL")
-ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -33,14 +32,37 @@ coloredlogs.install(level='INFO', logger=logger, fmt='%(asctime)s - %(levelname)
 nltk.download('punkt')
 nltk.download('stopwords')
 
+def get_access_token():
+    headers = {
+        "Content-Type": "application/json",
+    }
+    try:
+        res = requests.get(f'{FLASK_SERVER_BASE_URL}/token', headers=headers)
+        
+        if res.status_code == 200:
+            print("Access token retrieved successfully")
+            access_token = res.json().get('access_token', None)
+            print(f"Access Token: {access_token}")
+            return access_token
+        else:
+            print(f"Failed to retrieve access token, Status Code: {res.status_code}")
+            print(f"Response: {res.text}")
+            
+    except requests.exceptions.HTTPError as err:
+        print(f"HTTP error occurred: {err}")
+    except requests.exceptions.RequestException as e:
+        print(f"Request exception occurred: {e}")
+
+    return None
+
 def get_main_relevant_keyword_from_ai(keywords, description):
     print(f"Keywords: {keywords}")
     print(f"Original Description: {description}")
     """Get the main relevant keyword from the AI companion."""
+    
     payload = {
         "description": description,
         "keywords": keywords,
-        "token": ACCESS_TOKEN 
     }
     headers = {"Content-Type": "application/json"}
 
@@ -53,6 +75,7 @@ def get_main_relevant_keyword_from_ai(keywords, description):
         return main_keyword
     except requests.exceptions.HTTPError as err:
         print(f"HTTP error occurred: {err}")
+        print(f"Response: {response.text}")
     except requests.exceptions.RequestException as e:
         print(f"Request exception occurred: {e}")
 
@@ -209,7 +232,9 @@ def predict_by_supplier_name(supplier_name: str):
             suppliers_unspsc_df['Supplier Name'].str.contains(supplier_name, case=False, na=False)
         ]
         if not filtered_df.empty:
-            return filtered_df[['UNSPSC Code', 'UNSPSC Description']]
+            unspsc_code = filtered_df.iloc[0]['UNSPSC Code']
+            unspsc_description = filtered_df.iloc[0]['UNSPSC Description']
+            return unspsc_code, unspsc_description
         return None
     except Exception as e:
         logger.error(f"Error predicting by supplier name: {e}")
@@ -265,47 +290,3 @@ def predict_unspsc(description):
         unspsc_code, unspsc_description = None, None
     
     return unspsc_code, unspsc_description
-
-def main():
-    while True:
-        try:
-            description = input("Enter the product description (or type 'q' to quit): ")
-            
-            if description.lower() == 'q':
-                break
-
-            if 'supplier:' in description:
-                supplier_name = description.split('supplier:')[1].strip()
-                supplier_results = predict_by_supplier_name(supplier_name)
-                if supplier_results is not None:
-                    print(f'Supplier: {supplier_name}')
-                    for _, row in supplier_results.iterrows(): # pyright: ignore[reportAttributeAccessIssue]
-                        print(f"Predicted UNSPSC Code: {row['UNSPSC Code']}")
-                        print(f"Predicted UNSPSC Description: {row['UNSPSC Description']}")
-                else:
-                    print("Supplier not found.")
-                continue
-            
-            unspsc_code, unspsc_description = predict_unspsc(description)
-            
-            if unspsc_code:
-                category_codes = get_category_codes(unspsc_code)
-                category_details = [get_category_details_from_category_structure(*category_codes)]
-
-                print(f"Predicted UNSPSC Code: {unspsc_code}")
-                print(f"Predicted UNSPSC Description: {unspsc_description}")
-
-                for detail in category_details:
-                    if detail:
-                        print(f"Category Code: {detail['code']}")
-                        print(f"Category Description: {detail['description']}")
-                    else:
-                        print("Category details not found.")
-            else:
-                print("UNSPSC Code not found.")
-        except Exception as e:
-            logger.error(f"Error in main function: {e}")
-            print(f"An error occurred: {e}")
-
-if __name__ == '__main__':
-    main()
