@@ -6,3 +6,4 @@ unspsc_flask_server.py
 .env
 __pycache__/*
 *.csv
+models/

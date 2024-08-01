@@ -5,35 +5,43 @@ import re
 import joblib
 import coloredlogs
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import SGDClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import OneHotEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
+from scipy.sparse import hstack
 import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
+import warnings
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Setup logging
 logger = logging.getLogger(__name__)
 coloredlogs.install(level='INFO', logger=logger, fmt='%(asctime)s - %(levelname)s - %(message)s')
+
+# Suppress warnings
+warnings.filterwarnings('ignore')
 
 # Download necessary NLTK data
 nltk.download('punkt')
 nltk.download('stopwords')
 
 try:
-    dataset = pd.read_excel('datasets/new/Training.xlsx')
+    # Efficient data loading using openpyxl engine
+    dataset = pd.read_excel('datasets/new/Training_reference.xlsx', engine='openpyxl')
 except Exception as e:
     logger.error(f"Error loading dataset: {e}")
     raise
 
-print("Columns in the dataset:", dataset.columns)
-
 # Select necessary columns from the dataset
 dataset = dataset[['Description', 'Supplier Name', 'UNSPSC Code', 'UNSPSC Description', 'Category Code', 'Category Description']]
 
+# Convert specific columns to strings
 dataset['Description'] = dataset['Description'].astype(str)
 dataset['Supplier Name'] = dataset['Supplier Name'].astype(str)
 dataset['UNSPSC Description'] = dataset['UNSPSC Description'].astype(str)
@@ -70,75 +78,69 @@ dataset['Cleaned Text'] = dataset['Combined Text'].apply(preprocess_text)
 tfidf_vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(1, 2))
 
 # Encoding categorical features
-label_encoder_code = LabelEncoder()
-label_encoder_description = LabelEncoder()
-dataset['UNSPSC Code Encoded'] = label_encoder_code.fit_transform(dataset['UNSPSC Code'])
-dataset['UNSPSC Description Encoded'] = label_encoder_description.fit_transform(dataset['UNSPSC Description'])
+encoder = OneHotEncoder(sparse_output=True)
+supplier_encoded = encoder.fit_transform(dataset[['Supplier Name']])
 
 # Prepare features and target variables
-X = dataset[['Cleaned Text', 'Supplier Name']]
+X = dataset[['Cleaned Text']]
 y_code = dataset['UNSPSC Code']
 y_description = dataset['UNSPSC Description']
 
-# Define the feature extraction and model pipeline
-text_pipeline = Pipeline([
-    ('vectorizer', tfidf_vectorizer),
-    ('transformer', FunctionTransformer(lambda x: x, validate=False))  # Identity function as placeholder
-])
+# Vectorize text features
+text_features = tfidf_vectorizer.fit_transform(X['Cleaned Text'])
 
-def get_features(df):
-    # Vectorize the text features
-    text_features = text_pipeline.fit_transform(df['Cleaned Text'])
-    # Encode the categorical features
-    supplier_encoded = pd.get_dummies(df['Supplier Name'])
-    # Ensure the same columns in supplier_encoded
-    supplier_encoded = supplier_encoded.reindex(columns=dataset['Supplier Name'].unique(), fill_value=0)
-    return np.hstack([text_features.toarray(), supplier_encoded])
-
-X_features = get_features(dataset)
+# Combine text features and supplier features
+X_features = hstack([text_features, supplier_encoded])
 
 # Split the data
-X_train, X_test, y_code_train, y_code_test, y_description_train, y_description_test = train_test_split(
-    X_features, y_code, y_description, test_size=0.2, random_state=42
-)
+X_train, X_test, y_code_train, y_code_test = train_test_split(X_features, y_code, test_size=0.2, random_state=42)
+_, _, y_desc_train, y_desc_test = train_test_split(X_features, y_description, test_size=0.2, random_state=42)
 
-# Train Random Forest classifiers for both code and description
-model_code = RandomForestClassifier(n_estimators=150, random_state=42)
+# Use Random Forests for UNSPSC Code prediction
+model_code = RandomForestClassifier(n_estimators=100, max_depth=15, n_jobs=-1, random_state=42)
+
+# Train UNSPSC Code model
+logger.info("Training UNSPSC Code model...")
 model_code.fit(X_train, y_code_train)
 
-model_description = RandomForestClassifier(n_estimators=150, random_state=42)
-model_description.fit(X_train, y_description_train)
-
-# Make predictions
+# Predict UNSPSC Code
+logger.info("Predicting UNSPSC Code...")
 y_code_pred = model_code.predict(X_test)
-y_description_pred = model_description.predict(X_test)
 
-# Evaluate the models
+# Calculate metrics
 accuracy_code = accuracy_score(y_code_test, y_code_pred)
-precision_code = precision_score(y_code_test, y_code_pred, average='weighted', zero_division=1)
-recall_code = recall_score(y_code_test, y_code_pred, average='weighted', zero_division=1)
+precision_code = precision_score(y_code_test, y_code_pred, average='weighted')
+recall_code = recall_score(y_code_test, y_code_pred, average='weighted')
 f1_code = f1_score(y_code_test, y_code_pred, average='weighted')
 
-accuracy_description = accuracy_score(y_description_test, y_description_pred)
-precision_description = precision_score(y_description_test, y_description_pred, average='weighted', zero_division=1)
-recall_description = recall_score(y_description_test, y_description_pred, average='weighted', zero_division=1)
-f1_description = f1_score(y_description_test, y_description_pred, average='weighted')
+logger.info(f"UNSPSC Code Metrics - Accuracy: {accuracy_code:.4f}, Precision: {precision_code:.4f}, Recall: {recall_code:.4f}, F1 Score: {f1_code:.4f}")
 
-logger.info(f'UNSPSC Code - Accuracy: {accuracy_code}')
-logger.info(f'UNSPSC Code - Precision: {precision_code}')
-logger.info(f'UNSPSC Code - Recall: {recall_code}')
-logger.info(f'UNSPSC Code - F1 Score: {f1_code}')
+# Use Linear Classifier for UNSPSC Description prediction
+model_description = SGDClassifier(max_iter=1000, tol=1e-3, random_state=42)
 
-logger.info(f'UNSPSC Description - Accuracy: {accuracy_description}')
-logger.info(f'UNSPSC Description - Precision: {precision_description}')
-logger.info(f'UNSPSC Description - Recall: {recall_description}')
-logger.info(f'UNSPSC Description - F1 Score: {f1_description}')
+# Train UNSPSC Description model
+logger.info("Training UNSPSC Description model...")
+model_description.partial_fit(X_train, y_desc_train, classes=np.unique(y_description))
 
-# Save the models
-joblib.dump(model_code, 'unspsc_code_model.pkl')
-joblib.dump(model_description, 'unspsc_description_model.pkl')
+# Predict UNSPSC Description
+logger.info("Predicting UNSPSC Description...")
+y_desc_pred = model_description.predict(X_test)
 
+# Calculate metrics
+accuracy_desc = accuracy_score(y_desc_test, y_desc_pred)
+precision_desc = precision_score(y_desc_test, y_desc_pred, average='weighted')
+recall_desc = recall_score(y_desc_test, y_desc_pred, average='weighted')
+f1_desc = f1_score(y_desc_test, y_desc_pred, average='weighted')
 
+logger.info(f"UNSPSC Description Metrics - Accuracy: {accuracy_desc:.4f}, Precision: {precision_desc:.4f}, Recall: {recall_desc:.4f}, F1 Score: {f1_desc:.4f}")
+
+# Save models and vectorizer
+joblib.dump(tfidf_vectorizer, 'models/tfidf_vectorizer.joblib')
+joblib.dump(encoder, 'models/encoder.joblib')
+joblib.dump(model_code, 'models/random_forest_code.joblib')
+joblib.dump(model_description, 'models/sgd_description.joblib')
+
+# Interactive part
 def preprocess_user_input(user_input):
     combined_text = preprocess_text(user_input)
     return combined_text
@@ -183,6 +185,7 @@ def main():
         try:
             user_input = input("Enter the product description or supplier name (or type 'q' to quit): ")
             if user_input.lower() == 'q':
+                print("Exiting the interactive mode.")
                 break
             
             unspsc_code, unspsc_description, category_code, category_description = predict_unspsc(user_input)
@@ -194,6 +197,7 @@ def main():
                 print(f"Category Description: {category_description}")
             else:
                 print("UNSPSC Code or Description not found.")
+        
         except Exception as e:
             logger.error(f"Error in main function: {e}")
             print(f"An error occurred: {e}")
