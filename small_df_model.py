@@ -11,6 +11,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import OneHotEncoder
 from scipy.sparse import hstack
+from sklearn.utils import parallel_backend
 import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
@@ -51,33 +52,26 @@ dataset['UNSPSC Description'] = dataset['UNSPSC Description'].astype(str)
 # Combine text fields for feature extraction
 dataset['Combined Text'] = dataset['Description'] + ' ' + dataset['Supplier Name'] + ' ' + dataset['UNSPSC Description']
 
-# Clean and preprocess text data
+# Preprocessing text data with stopwords
 stop_words = set(stopwords.words('english'))
 
-def preprocess_text(text: str):
-    # Convert text to lowercase
-    text = text.lower()
-    # Remove punctuation
-    text = re.sub(r'[^a-zA-Z\s]', '', text)
-    # Remove extra spaces
-    text = re.sub(' +', ' ', text)
+def preprocess_text(text: str) -> str:
+    # Convert text to lowercase and remove punctuation
+    text = re.sub(r'[^a-zA-Z\s]', '', text.lower())
     
-    # Tokenize text
+    # Tokenize and remove stopwords
     word_tokens = word_tokenize(text)
-    
-    # Remove stopwords
-    filtered_words = [w for w in word_tokens if not w in stop_words]
+    filtered_words = [w for w in word_tokens if w not in stop_words]
     
     # Reconstruct the cleaned text
-    cleaned_text = " ".join(filtered_words)
-    
+    cleaned_text = ' '.join(filtered_words)
     return cleaned_text
 
 # Apply preprocessing
 dataset['Cleaned Text'] = dataset['Combined Text'].apply(preprocess_text)
 
 # Vectorization for text features
-tfidf_vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(1, 2))
+tfidf_vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(1, 2), max_features=10000)
 
 # Encoding categorical features
 encoder = OneHotEncoder(sparse_output=True, handle_unknown='ignore')
@@ -99,10 +93,11 @@ X_train, X_test, y_code_train, y_code_test = train_test_split(X_features, y_code
 _, _, y_desc_train, y_desc_test = train_test_split(X_features, y_description, test_size=0.2, random_state=42)
 
 # Use Random Forests for UNSPSC Code prediction
-model_code = RandomForestClassifier(n_estimators=100, max_depth=15, n_jobs=-1, random_state=42)
+model_code = RandomForestClassifier(n_estimators=50, max_depth=10, n_jobs=-1, random_state=42)
 
 logger.info("Training UNSPSC Code model...")
-model_code.fit(X_train, y_code_train)
+with parallel_backend('threading', n_jobs=-1):
+    model_code.fit(X_train, y_code_train)
 
 logger.info("Predicting UNSPSC Code...")
 y_code_pred = model_code.predict(X_test)
@@ -145,11 +140,11 @@ def lookup_details_by_description(predicted_description, dataset):
     else:
         return None, 'Not found', 'Not found'
 
-def preprocess_user_input(user_input):
+def preprocess_user_input(user_input: str) -> str:
     combined_text = preprocess_text(user_input)
     return combined_text
 
-def predict_unspsc(user_input):
+def predict_unspsc(user_input: str):
     try:
         # Preprocess user input
         preprocessed_input = preprocess_user_input(user_input)
