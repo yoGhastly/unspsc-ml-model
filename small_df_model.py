@@ -16,12 +16,10 @@ import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 import warnings
+import time
 
-# Setup logging
 logger = logging.getLogger(__name__)
 coloredlogs.install(level='INFO', logger=logger, fmt='%(asctime)s - %(levelname)s - %(message)s')
-
-# Suppress warnings
 warnings.filterwarnings('ignore')
 
 nltk.download('punkt')
@@ -42,7 +40,7 @@ missing_values = dataset.isna().sum()
 logger.info(f"Checking for NaN values:\n{missing_values}")
 
 # Impute missing UNSPSC Code with a placeholder
-dataset['UNSPSC Code'].fillna('Unknown', inplace=True)
+dataset['UNSPSC Code'].fillna('Unknown', inplace=True) # pyright: ignore[reportAttributeAccessIssue]
 
 # Convert specific columns to strings
 dataset['Description'] = dataset['Description'].astype(str)
@@ -68,7 +66,7 @@ def preprocess_text(text: str) -> str:
     return cleaned_text
 
 # Apply preprocessing
-dataset['Cleaned Text'] = dataset['Combined Text'].apply(preprocess_text)
+dataset['Cleaned Text'] = dataset['Combined Text'].apply(preprocess_text) # pyright: ignore[reportAttributeAccessIssue]
 
 # Vectorization for text features
 tfidf_vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(1, 2), max_features=10000)
@@ -96,7 +94,7 @@ _, _, y_desc_train, y_desc_test = train_test_split(X_features, y_description, te
 model_code = RandomForestClassifier(n_estimators=50, max_depth=10, n_jobs=-1, random_state=42)
 
 logger.info("Training UNSPSC Code model...")
-with parallel_backend('threading', n_jobs=-1):
+with parallel_backend('threading', n_jobs=-1):  # pyright: ignore[reportCallIssue] 
     model_code.fit(X_train, y_code_train)
 
 logger.info("Predicting UNSPSC Code...")
@@ -172,11 +170,14 @@ def main():
         user_input = input("Enter a product description (or type 'q' to quit): ")
         if user_input.lower() == 'q':
             break
+        start_time = time.time()
         predicted_code, predicted_description, category_code, category_description = predict_unspsc(user_input)
+        end_time = time.time()
         logger.info(f"Predicted UNSPSC Code: {predicted_code if predicted_code is not None else 'Not found'}")
         logger.info(f"Predicted UNSPSC Description: {predicted_description if predicted_description is not None else 'Not found'}")
         logger.info(f"Category Code: {category_code}")
         logger.info(f"Category Description: {category_description}")
+        logger.info(f'Model took {end_time - start_time:.4f} seconds to make the prediction.')
 
 if __name__ == '__main__':
     main()
