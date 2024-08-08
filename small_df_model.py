@@ -16,7 +16,6 @@ import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 import warnings
-import time
 
 logger = logging.getLogger(__name__)
 coloredlogs.install(level='INFO', logger=logger, fmt='%(asctime)s - %(levelname)s - %(message)s')
@@ -27,12 +26,15 @@ nltk.download('stopwords')
 
 try:
     dataset = pd.read_excel('datasets/new/Training_reference.xlsx', engine='openpyxl')
+    # Columns: Description | Supplier Name
+    inputs_df = pd.read_excel('datasets/new/input_descriptions_and_suppliers.xlsm', engine="openpyxl")
 except Exception as e:
     logger.error(f"Error loading dataset: {e}")
     raise
 
 # Select necessary columns from the dataset
 dataset = dataset[['Description', 'Supplier Name', 'UNSPSC Code', 'UNSPSC Description', 'Category Code', 'Category Description']]
+inputs_df = inputs_df[['Description', 'Supplier Name']]
 logger.info(f'Columns in the dataset: {dataset.columns}')
 
 # Check for missing values
@@ -165,19 +167,44 @@ def predict_unspsc(user_input: str):
         logger.error(f"Error during prediction: {e}")
         return None, None, None, None
 
+def get_combined_description_supplier(inputs_df: pd.DataFrame | pd.Series) -> list:
+    """
+    Combine the Description and Supplier Name columns into a single string for each row.
+    
+    Args:
+    inputs_df (pd.DataFrame): DataFrame containing 'Description' and 'Supplier Name' columns.
+
+    Returns:
+    list: List of combined strings of '<Description> <Supplier Name>'.
+    """
+    combined_list = []
+    
+    # Iterate over each row in the dataframe
+    for _index, row in inputs_df.iterrows():
+        description = str(row['Description'])
+        supplier_name = str(row['Supplier Name'])
+        
+        # Combine Description and Supplier Name
+        combined_text = f"{description} {supplier_name}"
+        
+        # Add to list
+        combined_list.append(combined_text)
+
+    logger.info("Successfully created combined description and supplier list.")
+    return combined_list
+
+
 def main():
-    while True:
-        user_input = input("Enter a product description (or type 'q' to quit): ")
-        if user_input.lower() == 'q':
-            break
-        start_time = time.time()
+    combined_descriptions_suppliers = get_combined_description_supplier(inputs_df)
+
+    results = []
+    for user_input in combined_descriptions_suppliers:
         predicted_code, predicted_description, category_code, category_description = predict_unspsc(user_input)
-        end_time = time.time()
-        logger.info(f"Predicted UNSPSC Code: {predicted_code if predicted_code is not None else 'Not found'}")
-        logger.info(f"Predicted UNSPSC Description: {predicted_description if predicted_description is not None else 'Not found'}")
-        logger.info(f"Category Code: {category_code}")
-        logger.info(f"Category Description: {category_description}")
-        logger.info(f'Model took {end_time - start_time:.4f} seconds to make the prediction.')
+        results.append([user_input, predicted_code, predicted_description, category_code, category_description])
+
+    results_df = pd.DataFrame(results, columns=['Input', 'Predicted UNSPSC Code', 'Predicted UNSPSC Description', 'Category Code', 'Category Description']) # pyright: ignore[reportArgumentType]
+    results_df.to_excel('results/predicted_unspsc_results.xlsx', index=False)
+    logger.info("Results saved to 'predicted_unspsc_results.xlsx'.")
 
 if __name__ == '__main__':
     main()
