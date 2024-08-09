@@ -25,9 +25,9 @@ nltk.download('punkt')
 nltk.download('stopwords')
 
 try:
-    dataset = pd.read_excel('datasets/new/Training_reference.xlsx', engine='openpyxl')
+    dataset = pd.read_excel('datasets/new/Training_a.xlsx', engine='openpyxl')
     # Columns: Description | Supplier Name
-    inputs_df = pd.read_excel('datasets/new/input_descriptions_and_suppliers.xlsm', engine="openpyxl")
+    inputs_df = pd.read_excel('datasets/new/inputs_b.xlsx', engine="openpyxl")
 except Exception as e:
     logger.error(f"Error loading dataset: {e}")
     raise
@@ -180,7 +180,7 @@ def get_combined_description_supplier(inputs_df: pd.DataFrame | pd.Series) -> li
     combined_list = []
     
     # Iterate over each row in the dataframe
-    for _index, row in inputs_df.iterrows():
+    for _, row in inputs_df.iterrows():
         description = str(row['Description'])
         supplier_name = str(row['Supplier Name'])
         
