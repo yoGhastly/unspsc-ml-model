@@ -45,7 +45,7 @@ missing_values = dataset.isna().sum()
 logger.info(f"Checking for NaN values:\n{missing_values}")
 
 # Impute missing UNSPSC Code with a placeholder
-dataset['UNSPSC Code'].fillna('Unknown', inplace=True)
+dataset['UNSPSC Code'].fillna('Unknown', inplace=True) # pyright: ignore[reportAttributeAccessIssue]
 
 # Convert specific columns to strings
 dataset['Description'] = dataset['Description'].astype(str)
@@ -80,7 +80,7 @@ def preprocess_text(text: str) -> str:
     return cleaned_text
 
 # Apply preprocessing
-dataset['Cleaned Text'] = dataset['Combined Text'].apply(preprocess_text)
+dataset['Cleaned Text'] = dataset['Combined Text'].apply(preprocess_text) # pyright: ignore[reportAttributeAccessIssue]
 
 # Vectorization for text features
 tfidf_vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(1, 2), max_features=10000)
@@ -108,7 +108,7 @@ _, _, y_desc_train, y_desc_test = train_test_split(X_features, y_description, te
 model_code = RandomForestClassifier(n_estimators=50, max_depth=10, n_jobs=-1, random_state=42)
 
 logger.info("Training UNSPSC Code model...")
-with parallel_backend('threading', n_jobs=-1): 
+with parallel_backend('threading', n_jobs=-1): # pyright: ignore[reportCallIssue] 
     model_code.fit(X_train, y_code_train)
 
 logger.info("Predicting UNSPSC Code...")
@@ -248,6 +248,89 @@ def get_combined_description_supplier(inputs_df: pd.DataFrame | pd.Series) -> li
     """
     return (inputs_df['Description'] + ' ' + inputs_df['Supplier Name']).tolist()
 
+def collect_feedback(inputs_df, feedback_df):
+    """
+    Collect feedback from the user and update the feedback DataFrame.
+    
+    Args:
+    inputs_df (pd.DataFrame): DataFrame containing predictions and user inputs.
+    feedback_df (pd.DataFrame): DataFrame containing existing feedback.
+    
+    Returns:
+    pd.DataFrame: Updated feedback DataFrame.
+    """
+    feedback_needed = True
+    while feedback_needed:
+        feedback_response = input("\nDo you want to provide feedback on any prediction? (yes/no): ").strip().lower()
+
+        if feedback_response == 'yes':
+            try:
+                # Prompt the user to select the index or cancel
+                feedback_index_input = input(f"Enter the index (1 to {len(inputs_df)}) of the prediction you want to provide feedback on, or type 'cancel' to exit: ").strip().lower()
+                if feedback_index_input == 'cancel':
+                    print("Feedback process canceled.")
+                    feedback_needed = False
+                    continue
+                
+                feedback_index = int(feedback_index_input) - 1
+
+                if 0 <= feedback_index < len(inputs_df):
+                    print(f'\nInput: {inputs_df.iloc[feedback_index]["Description"]} {inputs_df.iloc[feedback_index]["Supplier Name"]}')
+                    print(f'Predicted UNSPSC Code: {inputs_df.iloc[feedback_index]["Predicted UNSPSC Code"]}')
+                    print(f'Predicted UNSPSC Description: {inputs_df.iloc[feedback_index]["Predicted UNSPSC Description"]}')
+                    print(f'Category Code: {inputs_df.iloc[feedback_index]["Category Code"]}')
+                    print(f'Category Description: {inputs_df.iloc[feedback_index]["Category Description"]}')
+                    
+                    correct_code = input("Enter the correct UNSPSC Code (or type 'cancel' to exit): ").strip()
+                    if correct_code.lower() == 'cancel':
+                        print("Feedback process canceled.")
+                        feedback_needed = False
+                        continue
+
+                    correct_description = input("Enter the correct UNSPSC Description (or type 'cancel' to exit): ").strip()
+                    if correct_description.lower() == 'cancel':
+                        print("Feedback process canceled.")
+                        feedback_needed = False
+                        continue
+
+                    correct_category_code = input("Enter the correct Category Code (or type 'cancel' to exit): ").strip()
+                    if correct_category_code.lower() == 'cancel':
+                        print("Feedback process canceled.")
+                        feedback_needed = False
+                        continue
+
+                    correct_category_description = input("Enter the correct Category Description (or type 'cancel' to exit): ").strip()
+                    if correct_category_description.lower() == 'cancel':
+                        print("Feedback process canceled.")
+                        feedback_needed = False
+                        continue
+
+                    feedback_entry = {
+                        'Description': inputs_df.iloc[feedback_index]['Description'],
+                        'Supplier Name': inputs_df.iloc[feedback_index]['Supplier Name'],
+                        'Correct UNSPSC Code': correct_code,
+                        'Correct UNSPSC Description': correct_description,
+                        'Correct Category Code': correct_category_code,
+                        'Correct Category Description': correct_category_description
+                    }
+
+                    feedback_df = feedback_df.append(feedback_entry, ignore_index=True)
+                    print("Feedback recorded.")
+                    
+                else:
+                    print(f"Invalid index. Please enter a number between 1 and {len(inputs_df)}.")
+            except ValueError:
+                print("Invalid input. Please enter a valid number or type 'cancel' to exit.")
+        
+        elif feedback_response == 'no':
+            feedback_needed = False
+            print("No feedback provided.")
+        
+        else:
+            print("Invalid response. Please answer 'yes' or 'no'.")
+    
+    return feedback_df
+
 def main_loop():
     """
     Main loop for continuously running the prediction script and gathering feedback.
@@ -272,49 +355,10 @@ def main_loop():
     inputs_df.to_csv('outputs/predictions.csv', index=False)
     logger.info(f"Predictions saved to 'outputs/predictions.csv'.")
 
-    # Collect user feedback
-    feedback_needed = True
-    while feedback_needed:
-        feedback_response = input("\nDo you want to provide feedback on any prediction? (yes/no): ").strip().lower()
-
-        if feedback_response == 'yes':
-            # Collect feedback
-            feedback_index = int(input(f"Enter the index (1 to {len(input_list)}) of the prediction you want to provide feedback on: ").strip()) - 1
-            
-            if 0 <= feedback_index < len(input_list):
-                # Display current predictions for feedback
-                current_prediction = inputs_df.loc[feedback_index]
-                logger.info(f"Current Prediction for entry {feedback_index+1}:")
-                logger.info(f"  Description: {current_prediction['Description']}")
-                logger.info(f"  Supplier Name: {current_prediction['Supplier Name']}")
-                logger.info(f"  Predicted UNSPSC Code: {current_prediction['Predicted UNSPSC Code']}")
-                logger.info(f"  Predicted UNSPSC Description: {current_prediction['Predicted UNSPSC Description']}")
-                logger.info(f"  Category Code: {current_prediction['Category Code']}")
-                logger.info(f"  Category Description: {current_prediction['Category Description']}")
-
-                feedback_description = input(f"Enter the correct UNSPSC Description for entry {feedback_index+1}: ").strip()
-                feedback_code = input(f"Enter the correct UNSPSC Code for entry {feedback_index+1}: ").strip()
-                feedback_category_code = input(f"Enter the correct Category Code for entry {feedback_index+1}: ").strip()
-                feedback_category_description = input(f"Enter the correct Category Description for entry {feedback_index+1}: ").strip()
-                
-                # Update with feedback
-                inputs_df.loc[feedback_index, 'Correct UNSPSC Code'] = feedback_code
-                inputs_df.loc[feedback_index, 'Correct UNSPSC Description'] = feedback_description
-                inputs_df.loc[feedback_index, 'Correct Category Code'] = feedback_category_code
-                inputs_df.loc[feedback_index, 'Correct Category Description'] = feedback_category_description
-
-                # Save feedback to a separate file
-                feedback_df = inputs_df[['Description', 'Supplier Name', 'Correct UNSPSC Code', 'Correct UNSPSC Description', 'Correct Category Code', 'Correct Category Description']]
-                feedback_file_path = 'outputs/feedback.csv'
-                feedback_df.dropna().to_csv(feedback_file_path, index=False)
-                logger.info(f"Feedback saved to '{feedback_file_path}'.")
-            else:
-                logger.warning(f"Invalid index: {feedback_index+1}. Please try again.")
-        elif feedback_response == 'no':
-            feedback_needed = False
-            logger.info("Exiting feedback loop.")
-        else:
-            logger.warning("Invalid response. Please enter 'yes' or 'no'.")
+    # Collect and save user feedback
+    updated_feedback_df = collect_feedback(inputs_df, feedback_df)
+    updated_feedback_df.to_csv('outputs/feedback.csv', index=False)
+    logger.info("Feedback saved to 'outputs/feedback.csv'.")
 
 if __name__ == "__main__":
     """
@@ -330,7 +374,6 @@ if __name__ == "__main__":
 
         if continue_response == 'no':
             continue_running = False
-            logger.info("Exiting the script. Thank you!")
         elif continue_response != 'yes':
             logger.warning("Invalid response. Please enter 'yes' or 'no'.")
 
