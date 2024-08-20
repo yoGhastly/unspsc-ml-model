@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import pandas as pd
 import logging
@@ -73,7 +73,7 @@ def load_feedback_file():
     if os.path.exists(feedback_file_path):
         return pd.read_csv(feedback_file_path)
     else:
-        return pd.DataFrame(columns=['Description', 'Supplier Name', 'Correct UNSPSC Code', 'Correct UNSPSC Description', 'Correct Category Code', 'Correct Category Description']) # pyright: ignore[reportArgumentType]
+        return pd.DataFrame(columns=['Description', 'Correct UNSPSC Code', 'Correct UNSPSC Description', 'Correct Category Code', 'Correct Category Description']) # pyright: ignore[reportArgumentType]
 
 def validate_file(inputs_df: pd.DataFrame):
     required_columns = {'Description', 'Supplier Name'}
@@ -88,7 +88,7 @@ def predict_unspsc(user_input: str, feedback_df: pd.DataFrame):
         supplier_encoded_input = encoder.transform([[supplier_name]])
         user_features = hstack([vectorized_input, supplier_encoded_input])
         predicted_description = model_description.predict(user_features)[0]
-        feedback_match = feedback_df[(feedback_df['Description'] + ' ' + feedback_df['Supplier Name']) == user_input]
+        feedback_match = feedback_df[(feedback_df['Description']) == user_input]
         
         if not feedback_match.empty:
             feedback_row = feedback_match.iloc[0]
@@ -119,11 +119,9 @@ def predict():
         return jsonify({"error": "No file found"}), 400
 
     try:
-        # Ensure the file is an Excel file
         if not file.filename.endswith('.xlsx'): # pyright: ignore[reportOptionalMemberAccess]
             raise ValueError("Invalid file format. Only .xlsx files are supported.")
         
-        # Process the file
         inputs_df = pd.read_excel(file, engine="openpyxl")
         validate_file(inputs_df)
     except Exception as e:
@@ -136,13 +134,48 @@ def predict():
         prediction = predict_unspsc(user_input, feedback_df)
         predictions.append(prediction)
     
-    # Convert predictions to DataFrame and save to output file
     output_df = pd.DataFrame(predictions, columns=['Original Input', 'UNSPSC Code', 'UNSPSC Description', 'Category Code', 'Category Description']) # pyright: ignore[reportArgumentType]
-    output_path = 'outputs/predictions.xlsx'
-    output_df.to_excel(output_path, index=False)
+    result = output_df.to_dict(orient='records')
+    
+    return jsonify(result)
 
-    # Send the file as a response
-    return send_file(output_path, as_attachment=True, download_name='predictions.xlsx')
+# TODO: Implement feedback route
+# feedback structure: 
+"""
+[[{'value': 'DEWAS TO KOHLAPUR (1109) FY-24 SAMRAT ROADLINES'}, 
+{'value': 'N78100000'}, {'value': 'Mail and cargo transport'}, {'value': 'LSP-WWLTLFP-CATL1-011'}, {'value': 'LTLFP'}]]
+""" 
+@app.route('/save-feedback', methods=['POST'])
+def save_feedback():
+    feedback = request.json
+    if not feedback:
+        return jsonify({"error": "No feedback provided"}), 400
+
+    formatted_feedback = []
+    for feedback_item in feedback:
+        # Ensure feedback_item has exactly 5 items
+        if len(feedback_item) != 5:
+            return jsonify({"error": "Feedback item must have exactly 5 values"}), 400
+        
+        description = feedback_item[0]['value']
+        correct_unspsc_code = feedback_item[1]['value']
+        correct_unspsc_description = feedback_item[2]['value']
+        correct_category_code = feedback_item[3]['value']
+        correct_category_description = feedback_item[4]['value']
+        
+        formatted_feedback.append([
+            description, 
+            correct_unspsc_code, 
+            correct_unspsc_description, 
+            correct_category_code, 
+            correct_category_description
+        ])
+    # Save feedback to file
+    feedback_df = load_feedback_file()
+    feedback_df = pd.concat([feedback_df, pd.DataFrame(formatted_feedback, columns=feedback_df.columns)], ignore_index=True)
+    feedback_df.to_csv('outputs/feedback.csv', index=False)
+
+    return jsonify({"message": "Feedback saved successfully"})
 
 def get_combined_description_supplier(inputs_df: pd.DataFrame) -> list:
     return (inputs_df['Description'] + ' ' + inputs_df['Supplier Name']).tolist()
