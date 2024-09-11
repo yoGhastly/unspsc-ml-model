@@ -80,8 +80,13 @@ def validate_file(inputs_df: pd.DataFrame):
     if not required_columns.issubset(inputs_df.columns):
         raise ValueError(f"Input file must contain columns: {required_columns}")
 
+    for column in required_columns:
+        if not inputs_df[column].apply(isinstance, args=(str,)).all():
+            raise ValueError(f"All values in column '{column}' must be strings")
+
 def predict_unspsc(user_input: str, feedback_df: pd.DataFrame):
     try:
+        user_input = str(user_input)
         preprocessed_input = preprocess_user_input(user_input)
         vectorized_input = tfidf_vectorizer.transform([preprocessed_input])
         supplier_name = user_input.split()[-1]
@@ -139,12 +144,56 @@ def predict():
     
     return jsonify(result)
 
+
+@app.route('/predict-file', methods=['GET'])
+def predict_file():
+    try:
+        # Specify the file path for the input file
+        input_file_path = 'PO Spend (Jun and Jul).xlsx'
+        
+        # Check if the input file exists
+        if not os.path.exists(input_file_path):
+            logger.error(f"Input file {input_file_path} not found")
+            return jsonify({"error": f"Input file {input_file_path} not found"}), 400
+
+        # Load the input file
+        inputs_df = pd.read_excel(input_file_path, engine='openpyxl')
+
+        # Fill missing values and convert 'Description' and 'Supplier Name' columns to strings
+        inputs_df['Description'] = inputs_df['Description'].fillna('Unknown').astype(str)
+        inputs_df['Supplier Name'] = inputs_df['Supplier Name'].fillna('Unknown').astype(str)
+        
+        # Validate the input file format
+        validate_file(inputs_df)
+
+        # Load the feedback data
+        feedback_df = load_feedback_file()
+
+        # Create predictions for each row in the input file
+        predictions = []
+        combined_texts = get_combined_description_supplier(inputs_df)
+        for user_input in combined_texts:
+            prediction = predict_unspsc(user_input, feedback_df)
+            predictions.append(prediction)
+
+        # Create a DataFrame for the predictions
+        output_df = pd.DataFrame(predictions, columns=['Original Input', 'UNSPSC Code', 'UNSPSC Description', 'Category Code', 'Category Description'])
+        
+        # Save the predictions to the root directory
+        output_file_path = 'PO Spend (Jun and Jul) Predictions.xlsx'
+        output_df.to_excel(output_file_path, index=False)
+
+        # Log the success message
+        logger.info(f"Predictions saved to {output_file_path}")
+        
+        return jsonify({"message": f"Predictions saved to {output_file_path}"}), 200
+
+    except Exception as e:
+        logger.error(f"Error processing file: {e}")
+        return jsonify({"error": f"Error processing file: {e}"}), 500
+
+
 # TODO: Implement feedback route
-# feedback structure: 
-"""
-[[{'value': 'DEWAS TO KOHLAPUR (1109) FY-24 SAMRAT ROADLINES'}, 
-{'value': 'N78100000'}, {'value': 'Mail and cargo transport'}, {'value': 'LSP-WWLTLFP-CATL1-011'}, {'value': 'LTLFP'}]]
-""" 
 @app.route('/save-feedback', methods=['POST'])
 def save_feedback():
     feedback = request.json
@@ -153,7 +202,6 @@ def save_feedback():
 
     formatted_feedback = []
     for feedback_item in feedback:
-        # Ensure feedback_item has exactly 5 items
         if len(feedback_item) != 5:
             return jsonify({"error": "Feedback item must have exactly 5 values"}), 400
         

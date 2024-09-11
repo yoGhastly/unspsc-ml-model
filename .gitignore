@@ -7,3 +7,4 @@ unspsc_flask_server.py
 __pycache__/*
 *.csv
 models/
+*.xlsx
