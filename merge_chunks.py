@@ -38,7 +38,7 @@ def merge_formatted_chunks(chunk_folder, output_file):
     print(f"All chunks merged into '{output_file}'.")
 
 # Parameters
-chunk_folder = 'formatted/'  # Folder where the formatted chunks are stored
+chunk_folder = 'formatted_chunks/'  # Folder where the formatted chunks are stored
 output_file = 'merged_output.csv'  # Path to the final merged CSV file
 
 # Merge formatted chunks
